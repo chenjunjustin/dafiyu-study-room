@@ -2995,9 +2995,12 @@ function playLive2DMotion(name, durationMs) {
   if (!live2dReady || !live2dModel) return;
   try {
     live2dModel.motion(name);
+    els.petMascot.dataset.lastMotion = name;
+    els.petMascot.dataset.motionActive = "true";
     clearTimeout(motionResetTimer);
     const duration = Number(durationMs) || (LIVE2D_MOTION_DURATIONS[name] || 1.5) * 1000;
     motionResetTimer = setTimeout(() => {
+      els.petMascot.dataset.motionActive = "false";
       clearLive2DMotionPose();
     }, duration + 140);
   } catch (error) {
@@ -3224,6 +3227,7 @@ function resetLive2DPetState() {
   delete els.petMascot.dataset.expression;
   delete els.petMascot.dataset.expressionParams;
   delete els.petMascot.dataset.aiProps;
+  els.petMascot.dataset.motionActive = "false";
   clearTimeout(motionResetTimer);
   clearLive2DMotionPose();
   updatePetMood();
