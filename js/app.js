@@ -571,7 +571,7 @@ async function openPersonaPromptModal() {
               <strong>主动搭话</strong>
               <span id="proactive-mode-note">每 ${Number(state.settings.proactiveIntervalMin) || 5} 分钟掷一次 · ${Math.round(
                 (Number(state.settings.proactiveChance) || 0.35) * 100,
-              )}% 概率</span>
+              )}% 概率${state.settings.quietHoursEnabled !== false ? " · 夜间静默" : " · 全天可搭话"}</span>
             </div>
             <button class="proactive-switch" type="button" id="modal-proactive-toggle"
               aria-pressed="${state.settings.proactiveEnabled !== false}" aria-label="开关主动搭话">
@@ -601,9 +601,19 @@ async function openPersonaPromptModal() {
               </div>
             </label>
           </div>
+          <div class="proactive-setting proactive-quiet-row">
+            <div>
+              <strong>夜间静默</strong>
+              <span>23:00–08:00 不自动搭话</span>
+            </div>
+            <button class="proactive-switch" type="button" id="modal-quiet-hours-toggle"
+              aria-pressed="${state.settings.quietHoursEnabled !== false}" aria-label="开关夜间静默">
+              <span></span>
+            </button>
+          </div>
           <div class="proactive-modal-foot">
             <button class="proactive-test" type="button" id="test-proactive-in-modal">试一句</button>
-            <span>23–08 静默 · 用户未回复时不会连续追问</span>
+            <span>关闭夜间静默后凌晨也会检查 · 用户未回复时不会连续追问</span>
           </div>
         </div>
         <div class="form-actions">
@@ -615,19 +625,29 @@ async function openPersonaPromptModal() {
   const form = document.getElementById("persona-form");
   const sourceNote = document.getElementById("persona-source-note");
   const proactiveToggle = document.getElementById("modal-proactive-toggle");
+  const quietHoursToggle = document.getElementById("modal-quiet-hours-toggle");
   const proactiveNote = document.getElementById("proactive-mode-note");
   const intervalSelect = form.elements.proactiveInterval;
   const chanceInput = form.elements.proactiveChance;
   const chanceOutput = chanceInput.parentElement.querySelector("output");
   const updateProactiveNote = () => {
     proactiveNote.textContent = proactiveToggle.getAttribute("aria-pressed") === "true"
-      ? `每 ${intervalSelect.value} 分钟掷一次 · ${chanceInput.value}% 概率`
+      ? `每 ${intervalSelect.value} 分钟掷一次 · ${chanceInput.value}% 概率${
+          quietHoursToggle.getAttribute("aria-pressed") === "true" ? " · 夜间静默" : " · 全天可搭话"
+        }`
       : "已关闭 · 不会主动打扰";
   };
   proactiveToggle.addEventListener("click", () => {
     proactiveToggle.setAttribute(
       "aria-pressed",
       String(proactiveToggle.getAttribute("aria-pressed") !== "true"),
+    );
+    updateProactiveNote();
+  });
+  quietHoursToggle.addEventListener("click", () => {
+    quietHoursToggle.setAttribute(
+      "aria-pressed",
+      String(quietHoursToggle.getAttribute("aria-pressed") !== "true"),
     );
     updateProactiveNote();
   });
@@ -669,6 +689,7 @@ async function openPersonaPromptModal() {
     state.settings.personaPreset =
       prompt === astrbotPrompt ? "astrbot" : prompt === defaultPrompt ? "original" : "custom";
     state.settings.proactiveEnabled = proactiveToggle.getAttribute("aria-pressed") === "true";
+    state.settings.quietHoursEnabled = quietHoursToggle.getAttribute("aria-pressed") === "true";
     state.settings.proactiveIntervalMin = Number(intervalSelect.value) || 5;
     state.settings.proactiveChance = Math.max(
       0.05,
@@ -1812,6 +1833,7 @@ function scheduleProactiveChat(delayMs = proactiveIntervalMs()) {
 }
 
 function quietHoursNow() {
+  if (state.settings.quietHoursEnabled === false) return false;
   const hour = new Date().getHours();
   return hour >= 23 || hour < 8;
 }
@@ -1839,6 +1861,7 @@ async function checkProactiveChat() {
   const messages = activeMessages();
   const last = messages[messages.length - 1];
   if (last?.role === "assistant" && last.proactive) {
+    scheduleProactiveChat();
     return;
   }
   const elapsed = Date.now() - ui.lastActivityAt;
@@ -1931,6 +1954,7 @@ async function triggerProactiveMessage({ manual = false } = {}) {
     showToast("大肥鱼想跟你说句话，点「大肥鱼」回来看看。");
   }
   ui.proactiveBusy = false;
+  scheduleProactiveChat();
 }
 
 function toggleEmotePanel(force) {
