@@ -50,6 +50,13 @@ const ui = {
   lastActivityAt: Date.now(),
   proactiveTimer: null,
   proactiveBusy: false,
+  petOffsetX: 0,
+  petOffsetY: 0,
+  petScale: 1,
+  petDrag: null,
+  petDragging: false,
+  suppressPetTapUntil: 0,
+  lastPointerMoveAt: 0,
 };
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 124;
@@ -62,6 +69,11 @@ let live2dModel = null;
 let live2dReady = false;
 let live2dMood = "";
 let live2dResizeObserver = null;
+let activeExpressionParams = new Map();
+let expressionResetTimer = null;
+let expressionLockUntil = 0;
+let idleInteractionTimer = null;
+let idleLookAroundTimer = null;
 
 const PET_LINES = [
   "*（其实本鱼刚刚也在摸鱼……）* 先做 25 分钟吧。",
@@ -113,17 +125,96 @@ const SESSION_API_KEY = "dafiyu-deepseek-session-key";
 
 const EXPRESSION_MOTIONS = {
   happy: "aidale",
-  blush: "aidale",
+  blush: "selfieQuick",
   love: "aidale",
-  stars: "selfieQuick",
+  stars: "selfie",
   sweat: "bubble",
   angry: "splash",
-  sad: "selfieQuick",
+  sad: "openLid",
   tongue: "selfieQuick",
   question: "bubble",
-  surprise: "bubble",
+  surprise: "openLid",
   dizzy: "splash",
+  whale: "ketchup",
 };
+
+const EXPRESSION_LABELS = {
+  happy: "开心",
+  blush: "脸红",
+  love: "爱心眼",
+  stars: "星星眼",
+  sweat: "流汗",
+  angry: "生气",
+  sad: "委屈",
+  tongue: "吐舌",
+  whale: "鲸鱼",
+  question: "问号",
+  surprise: "震惊",
+  dizzy: "晕晕",
+};
+
+const EXPRESSION_PARAMS = {
+  happy: {
+    ParamCheek76: 1,
+    ParamEyeLOpen: 0,
+    ParamEyeROpen: 0,
+    ParamMouthForm: 1,
+  },
+  blush: { Paramhh2: 1, ParamCheek76: 0.35 },
+  love: { ParamCheek17: 1, Paramhh2: 1, ParamMouthForm: 0.8 },
+  stars: { ParamCheek16: 1, ParamMouthOpenY: 0.45, ParamMouthForm: 1 },
+  sweat: { ParamCheek19: 1, ParamBrowLAngle: -0.55, ParamBrowRAngle: -0.55 },
+  angry: {
+    ParamCheek80: 1,
+    ParamCheek23: 1,
+    ParamBrowLX: -1,
+    ParamBrowLY: -0.5,
+    ParamBrowRX: -1,
+    ParamBrowRY: -0.5,
+  },
+  sad: { ParamCheek27: 1, ParamCheek15: 1, ParamMouthForm: -1.2 },
+  tongue: {
+    ParamCheek79: 1,
+    ParamBrowRForm2: 0.9,
+    ParamMouthOpenY: 0.7,
+  },
+  whale: { jingyu: 1, pengshui: 1, ParamCheek76: 0.35 },
+  question: { ParamCheek74: 1 },
+  surprise: { ParamCheek75: 1, ParamMouthOpenY: 1, ParamEyeLOpen: 1.15 },
+  dizzy: {
+    ParamCheek77: 1,
+    ParamEyeLOpen: 0.45,
+    ParamEyeROpen: 0.45,
+    ParamBrowLForm: 1,
+    ParamBrowRForm: 1,
+  },
+};
+
+const EXPRESSION_EFFECTS = {
+  happy: ["✦", "✧", "♪"],
+  blush: ["♡", "♡", "✿"],
+  love: ["♥", "♥", "♡", "♥"],
+  stars: ["✦", "✧", "✦", "✧", "★"],
+  sweat: ["💧", "💧"],
+  angry: ["💢", "＃"],
+  sad: ["💧", "💧", "…"],
+  tongue: ["😋", "♪"],
+  whale: ["🐋", "🫧", "🫧"],
+  question: ["?", "?"],
+  surprise: ["!", "!"],
+  dizzy: ["💫", "✧", "🌀"],
+};
+
+const PET_MOTION_MENU = [
+  { id: "aidale", label: "摇摇鱼鳍", expression: "happy" },
+  { id: "bubble", label: "吹泡泡", expression: "sweat" },
+  { id: "selfie", label: "自拍一下", expression: "stars" },
+  { id: "selfieQuick", label: "快速自拍", expression: "blush" },
+  { id: "ketchup", label: "番茄酱", expression: "tongue" },
+  { id: "openLid", label: "打开盖子", expression: "surprise" },
+  { id: "splash", label: "甩水花", expression: "angry" },
+  { id: "idle", label: "安静待着", expression: null },
+];
 
 const SKILL_MODES = {
   create: {
@@ -1862,7 +1953,23 @@ function toggleConversationPanel(force) {
 }
 
 function resetExpressionSoon(delay = 3800) {
-  setTimeout(() => {
+  if (!activeExpressionParams.size) return;
+  clearTimeout(expressionResetTimer);
+  expressionLockUntil = performance.now() + delay;
+  expressionResetTimer = setTimeout(() => {
+    if (performance.now() < expressionLockUntil - 40) return;
+    clearTimeout(expressionResetTimer);
+    activeExpressionParams.clear();
+    try {
+      const expressionManager =
+        live2dModel?.internalModel?.motionManager?.expressionManager;
+      expressionManager?.stopAllExpressions?.();
+      expressionManager?.resetExpression?.();
+    } catch {
+      // The model can fall back to its neutral face.
+    }
+    delete els.petMascot.dataset.expression;
+    delete els.petMascot.dataset.expressionParams;
     live2dMood = "";
     applyLive2DMood(els.petMascot.dataset.mood || "idle");
   }, delay);
@@ -2815,14 +2922,42 @@ function fitLive2DModel() {
   const modelWidth = Math.max(1, live2dModel.internalModel?.width || live2dModel.width);
   const modelHeight = Math.max(1, live2dModel.internalModel?.height || live2dModel.height);
   const compact = width < 560;
-  const scale = Math.min(
-    (width * (compact ? 0.88 : 0.95)) / modelWidth,
-    (height * (compact ? 1.1 : 1.2)) / modelHeight,
-  );
+  const scale =
+    Math.min(
+      (width * (compact ? 0.82 : 0.88)) / modelWidth,
+      (height * (compact ? 1.05 : 1.16)) / modelHeight,
+    ) * ui.petScale;
   els.petMascot.dataset.modelSize = `${Math.round(modelWidth)}x${Math.round(modelHeight)} / ${scale.toFixed(3)}`;
   live2dModel.scale.set(scale);
-  live2dModel.x = width * 0.5;
-  live2dModel.y = height * 0.56;
+  live2dModel.x = width * 0.5 + ui.petOffsetX;
+  live2dModel.y = height * 0.56 + ui.petOffsetY;
+}
+
+function focusLive2DAt(clientX, clientY, instant = false) {
+  if (!live2dReady || !live2dModel || !live2dApp) return;
+  const rect = els.petStage.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const x = ((clientX - rect.left) / rect.width) * live2dApp.screen.width;
+  const y = ((clientY - rect.top) / rect.height) * live2dApp.screen.height;
+  try {
+    live2dModel.focus(x, y, instant);
+    els.petMascot.dataset.focus = `${Math.round(x)},${Math.round(y)}`;
+  } catch {
+    // Pointer focus is a non-critical enhancement.
+  }
+}
+
+function focusLive2DAtCenter() {
+  if (!live2dReady || !live2dModel || !live2dApp) return;
+  try {
+    live2dModel.focus(
+      live2dApp.screen.width * 0.5,
+      live2dApp.screen.height * 0.42,
+    );
+    els.petMascot.dataset.focus = "center";
+  } catch {
+    // The neutral gaze still remains available on the model.
+  }
 }
 
 function playLive2DMotion(name) {
@@ -2834,16 +2969,67 @@ function playLive2DMotion(name) {
   }
 }
 
-function playLive2DExpression(name) {
-  if (!live2dReady || !live2dModel) return;
+function spawnExpressionEffect(name) {
+  if (!els.petStage) return;
+  const symbols = EXPRESSION_EFFECTS[name] || ["✦"];
+  const layer = document.createElement("div");
+  layer.className = "expression-effect";
+  layer.dataset.expression = name;
+  layer.innerHTML = symbols
+    .map((symbol, index) => {
+      const spread = symbols.length > 1 ? index / (symbols.length - 1) : 0.5;
+      const left = 26 + spread * 48 + (Math.random() - 0.5) * 12;
+      const top = 19 + Math.random() * 34;
+      const size = 20 + Math.random() * 22;
+      const rotate = -18 + Math.random() * 36;
+      return `<span style="--x:${left}%;--y:${top}%;--size:${size}px;--rotate:${rotate}deg;--delay:${index * 90}ms">${symbol}</span>`;
+    })
+    .join("");
+  els.petStage.appendChild(layer);
+  els.petStage.classList.remove("has-expression-effect");
+  void els.petStage.offsetWidth;
+  els.petStage.classList.add("has-expression-effect");
+  setTimeout(() => {
+    layer.remove();
+    if (!els.petStage.querySelector(".expression-effect")) {
+      els.petStage.classList.remove("has-expression-effect");
+    }
+  }, 1900);
+}
+
+function setLiveExpressionNow(name) {
+  const params = EXPRESSION_PARAMS[name];
+  if (!params) return false;
+  activeExpressionParams.clear();
+  Object.entries(params).forEach(([id, value]) => {
+    activeExpressionParams.set(id, value);
+  });
+  els.petMascot.dataset.expression = name;
+  els.petMascot.dataset.expressionParams = JSON.stringify(params);
+  if (els.liveMoodChip) {
+    els.liveMoodChip.querySelector("span:last-child").textContent =
+      EXPRESSION_LABELS[name] || name;
+  }
+  if (!live2dReady || !live2dModel) return false;
   try {
     live2dModel.expression(name);
+    return true;
   } catch (error) {
     console.warn(`Live2D expression unavailable: ${name}`, error);
+    return false;
   }
 }
 
+function playLive2DExpression(name, { duration = 4300, effect = true } = {}) {
+  if (!EXPRESSION_PARAMS[name]) return;
+  expressionLockUntil = performance.now() + duration;
+  setLiveExpressionNow(name);
+  if (effect) spawnExpressionEffect(name);
+  resetExpressionSoon(duration);
+}
+
 function applyLive2DMood(mood) {
+  if (performance.now() < expressionLockUntil) return;
   if (!live2dReady || live2dMood === mood) return;
   live2dMood = mood;
   const expression = {
@@ -2852,10 +3038,16 @@ function applyLive2DMood(mood) {
     sleepy: "sad",
     comfort: "blush",
   }[mood];
-  if (expression) playLive2DExpression(expression);
+  if (expression) setLiveExpressionNow(expression);
   else {
     try {
-      live2dModel.internalModel?.motionManager?.expressionManager?.resetExpression?.();
+      const expressionManager =
+        live2dModel.internalModel?.motionManager?.expressionManager;
+      expressionManager?.stopAllExpressions?.();
+      expressionManager?.resetExpression?.();
+      activeExpressionParams.clear();
+      delete els.petMascot.dataset.expression;
+      delete els.petMascot.dataset.expressionParams;
     } catch {
       // The default expression is already active on older model runtimes.
     }
@@ -2899,21 +3091,15 @@ async function initLive2D() {
     live2dApp.stage.addChild(live2dModel);
     fitLive2DModel();
     live2dReady = true;
+    const coreModel = live2dModel.internalModel?.coreModel;
+    live2dModel.internalModel?.on?.("beforeModelUpdate", () => {
+      if (!coreModel || activeExpressionParams.size === 0) return;
+      activeExpressionParams.forEach((value, id) => {
+        coreModel.setParameterValueById(id, value);
+      });
+    });
     els.petMascot.classList.add("is-ready");
     applyMoodVisual(els.petMascot.dataset.mood || "idle");
-
-    els.petMascot.addEventListener("pointermove", (event) => {
-      if (!live2dReady) return;
-      const rect = els.petMascot.getBoundingClientRect();
-      const x = ((event.clientX - rect.left) / rect.width) * live2dApp.screen.width;
-      const y = ((event.clientY - rect.top) / rect.height) * live2dApp.screen.height;
-      try {
-        live2dModel.focus(x, y);
-        els.petMascot.dataset.focus = `${Math.round(x)},${Math.round(y)}`;
-      } catch {
-        // Pointer focus is a non-critical enhancement.
-      }
-    });
 
     live2dResizeObserver = new ResizeObserver(() => {
       requestAnimationFrame(() => {
@@ -2966,13 +3152,13 @@ function patPet() {
   void els.petMascot.offsetWidth;
   els.petMascot.classList.add("is-petting");
   playLive2DMotion("aidale");
+  playLive2DExpression("blush");
+  setPetMood("happy", 1600);
   setTimeout(() => {
     els.petMascot.classList.remove("is-petting");
     els.petStage.classList.remove("is-petting");
   }, 1000);
   speakAsPet(pickPetLine(PET_PAT_LINES), 4600);
-  setPetMood("happy", 1600);
-  playLive2DExpression("blush");
 }
 
 function pokePet() {
@@ -2983,12 +3169,13 @@ function pokePet() {
     "本鱼在这儿陪聊，不是按钮。",
   ];
   playLive2DMotion("bubble");
-  speakAsPet(pickPetLine(lines), 4200);
-  setPetMood("happy", 1200);
   playLive2DExpression("sweat");
+  setPetMood("happy", 1200);
+  speakAsPet(pickPetLine(lines), 4200);
 }
 
 function handlePetTap(event) {
+  if (performance.now() < ui.suppressPetTapUntil) return;
   const now = performance.now();
   if (now - (handlePetTap.lastAt || 0) < 160) return;
   handlePetTap.lastAt = now;
@@ -3007,6 +3194,162 @@ function handlePetTap(event) {
   tapBurst(event.clientX, event.clientY);
   if (hits.includes("Head") || relativeY < 0.58) patPet();
   else pokePet();
+}
+
+const PET_MOTION_LINES = {
+  aidale: "鱼鳍摇摇，今天也慢慢游。",
+  bubble: "咕噜咕噜……泡泡比待办事项可爱多了。",
+  selfie: "先别眨眼，本鱼要发给鱼缸群。",
+  selfieQuick: "咔嚓。好了，本鱼今天也很上镜。",
+  ketchup: "番茄酱是番茄，所以也算补充番茄了。",
+  openLid: "里面没有藏小鱼干，别看了。",
+  splash: "甩你一脸水花，清醒一点了没？",
+  idle: "本鱼在。你忙你的。",
+};
+
+function triggerPetMotion(actionId) {
+  const action = PET_MOTION_MENU.find((item) => item.id === actionId);
+  if (!action) return;
+  playLive2DMotion(action.id);
+  if (action.expression) playLive2DExpression(action.expression);
+  speakAsPet(PET_MOTION_LINES[action.id] || "本鱼动一下给你看。", 3800);
+}
+
+function closePetContextMenu() {
+  document.querySelector(".pet-context-menu")?.remove();
+}
+
+function showPetContextMenu(clientX, clientY) {
+  closePetContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "pet-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <div class="pet-context-head">
+      <strong>想怎么逗本鱼？</strong>
+      <span>右键菜单 · 拖拽可换位置 · 滚轮可缩放</span>
+    </div>
+    <div class="pet-context-grid">
+      ${PET_MOTION_MENU.map(
+        (item) =>
+          `<button type="button" role="menuitem" data-pet-action="${item.id}">${item.label}</button>`,
+      ).join("")}
+    </div>
+    <div class="pet-context-expressions">
+      <span>表情</span>
+      ${Object.entries(EXPRESSION_LABELS)
+        .map(
+          ([id, label]) =>
+            `<button type="button" role="menuitem" data-pet-expression="${id}">${label}</button>`,
+        )
+        .join("")}
+    </div>`;
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(clientX, window.innerWidth - rect.width - 12)}px`;
+  menu.style.top = `${Math.min(clientY, window.innerHeight - rect.height - 12)}px`;
+  requestAnimationFrame(() => menu.classList.add("is-open"));
+}
+
+function beginPetPointer(event) {
+  if (event.button !== 0) return;
+  ui.petDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: ui.petOffsetX,
+    offsetY: ui.petOffsetY,
+  };
+  ui.petDragging = false;
+  els.petMascot.setPointerCapture?.(event.pointerId);
+}
+
+function movePetPointer(event) {
+  ui.lastPointerMoveAt = Date.now();
+  focusLive2DAt(event.clientX, event.clientY);
+  if (!ui.petDrag || ui.petDrag.pointerId !== event.pointerId) return;
+  const dx = event.clientX - ui.petDrag.startX;
+  const dy = event.clientY - ui.petDrag.startY;
+  if (!ui.petDragging && Math.hypot(dx, dy) < 7) return;
+  ui.petDragging = true;
+  ui.petOffsetX = ui.petDrag.offsetX + dx;
+  ui.petOffsetY = ui.petDrag.offsetY + dy;
+  els.petMascot.classList.add("is-dragging");
+  fitLive2DModel();
+}
+
+function endPetPointer(event) {
+  if (!ui.petDrag || ui.petDrag.pointerId !== event.pointerId) return;
+  if (ui.petDragging) {
+    ui.suppressPetTapUntil = performance.now() + 360;
+    els.petMascot.dataset.position = `${Math.round(ui.petOffsetX)},${Math.round(
+      ui.petOffsetY,
+    )}`;
+  }
+  ui.petDrag = null;
+  ui.petDragging = false;
+  els.petMascot.classList.remove("is-dragging");
+  els.petMascot.releasePointerCapture?.(event.pointerId);
+}
+
+function handlePetWheel(event) {
+  if (!live2dReady) return;
+  event.preventDefault();
+  const direction = event.deltaY > 0 ? -1 : 1;
+  ui.petScale = Math.min(1.28, Math.max(0.72, ui.petScale + direction * 0.06));
+  els.petMascot.dataset.petScale = ui.petScale.toFixed(2);
+  fitLive2DModel();
+}
+
+function scheduleIdleInteraction() {
+  clearTimeout(idleInteractionTimer);
+  const delay = 11_000 + Math.random() * 11_000;
+  idleInteractionTimer = setTimeout(() => {
+    const canInteract =
+      ui.view === "today" &&
+      document.visibilityState === "visible" &&
+      !ui.petDragging &&
+      Date.now() - ui.lastPointerMoveAt > 5200;
+    if (canInteract && live2dReady) {
+      const roll = Math.random();
+      if (roll < 0.36) {
+        const motions = PET_MOTION_MENU.filter((item) => item.id !== "idle");
+        playLive2DMotion(motions[Math.floor(Math.random() * motions.length)].id);
+      } else if (roll < 0.56) {
+        const names = Object.keys(EXPRESSION_LABELS);
+        playLive2DExpression(names[Math.floor(Math.random() * names.length)], {
+          duration: 3000,
+        });
+      } else if (roll < 0.64) {
+        speakAsPet(pickPetLine(PROACTIVE_LINES), 4800);
+        playLive2DExpression("question", { duration: 3200 });
+      }
+    }
+    scheduleIdleInteraction();
+  }, delay);
+}
+
+function scheduleIdleLookAround() {
+  clearInterval(idleLookAroundTimer);
+  idleLookAroundTimer = setInterval(() => {
+    if (
+      !live2dReady ||
+      ui.view !== "today" ||
+      document.visibilityState !== "visible" ||
+      ui.petDragging ||
+      Date.now() - ui.lastPointerMoveAt < 3200
+    ) {
+      return;
+    }
+    if (!live2dApp) return;
+    const x = live2dApp.screen.width * (0.22 + Math.random() * 0.56);
+    const y = live2dApp.screen.height * (0.16 + Math.random() * 0.36);
+    const rect = els.petStage.getBoundingClientRect();
+    const clientX = rect.left + (x / live2dApp.screen.width) * rect.width;
+    const clientY = rect.top + (y / live2dApp.screen.height) * rect.height;
+    focusLive2DAt(clientX, clientY);
+    els.petMascot.dataset.idleGaze = Math.random() < 0.5 ? "left" : "right";
+  }, 3600);
 }
 
 function tapBurst(clientX, clientY) {
@@ -3074,6 +3417,27 @@ function startFocusWithTask(taskId = "") {
 
 function handleGlobalClick(event) {
   const target = event.target;
+
+  const petAction = target.closest("[data-pet-action]");
+  if (petAction) {
+    triggerPetMotion(petAction.dataset.petAction);
+    closePetContextMenu();
+    return;
+  }
+
+  const petExpression = target.closest("[data-pet-expression]");
+  if (petExpression) {
+    const expression = petExpression.dataset.petExpression;
+    playLive2DExpression(expression);
+    if (EXPRESSION_MOTIONS[expression]) playLive2DMotion(EXPRESSION_MOTIONS[expression]);
+    speakAsPet(`*（${EXPRESSION_LABELS[expression] || "做了个表情"}）*`, 2400);
+    closePetContextMenu();
+    return;
+  }
+
+  if (!target.closest(".pet-context-menu, #pet-mascot")) {
+    closePetContextMenu();
+  }
 
   if (
     els.emotePanel &&
@@ -3310,11 +3674,14 @@ function bindEvents() {
 
   els.petMascot.addEventListener("pointerleave", () => {
     els.petStage.classList.remove("is-hovering");
-    if (live2dReady && live2dModel && live2dApp) {
-      live2dModel.focus(live2dApp.screen.width / 2, live2dApp.screen.height * 0.45);
-    }
+    if (!ui.petDragging) focusLive2DAtCenter();
   });
 
+  els.petMascot.addEventListener("pointerdown", beginPetPointer);
+  els.petMascot.addEventListener("pointermove", movePetPointer);
+  els.petMascot.addEventListener("pointerup", endPetPointer);
+  els.petMascot.addEventListener("pointercancel", endPetPointer);
+  els.petMascot.addEventListener("wheel", handlePetWheel, { passive: false });
   els.petMascot.addEventListener("click", handlePetTap);
 
   els.petMascot.addEventListener("dblclick", (event) => {
@@ -3324,8 +3691,17 @@ function bindEvents() {
     speakAsPet("又摸又拍，本鱼今天营业过头了。", 4200);
   });
 
+  els.petMascot.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    showPetContextMenu(event.clientX, event.clientY);
+  });
+
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    if (document.querySelector(".pet-context-menu")) {
+      closePetContextMenu();
+      return;
+    }
     if (els.modalRoot.classList.contains("is-open")) {
       const cancel = els.modalRoot.querySelector("[data-confirm-cancel], [data-modal-close]");
       if (cancel) cancel.click();
@@ -3346,6 +3722,7 @@ function bindEvents() {
   });
 
   document.addEventListener("visibilitychange", () => {
+    closePetContextMenu();
     if (document.visibilityState === "visible") {
       tickTimer();
       renderTopbar();
@@ -3358,7 +3735,10 @@ function bindEvents() {
   });
 
   window.addEventListener("beforeunload", save);
-  window.addEventListener("resize", applyChatWidth);
+  window.addEventListener("resize", () => {
+    applyChatWidth();
+    closePetContextMenu();
+  });
 }
 
 function init() {
@@ -3372,22 +3752,10 @@ function init() {
   initChatResize();
   initLive2D();
   scheduleProactiveChat();
+  scheduleIdleInteraction();
+  scheduleIdleLookAround();
   tickTimer();
   setInterval(tickTimer, 500);
-  setInterval(() => {
-    if (
-      ui.view !== "today" ||
-      !live2dReady ||
-      state.timer.status === "running" ||
-      document.visibilityState !== "visible"
-    ) {
-      return;
-    }
-    if (Math.random() < 0.58) {
-      const motions = ["bubble", "openLid", "selfieQuick", "aidale"];
-      playLive2DMotion(motions[Math.floor(Math.random() * motions.length)]);
-    }
-  }, 28_000);
   checkRemoteMode();
   setTimeout(() => {
     if (!ui.chatOpen && els.petSpeechText.textContent) {
