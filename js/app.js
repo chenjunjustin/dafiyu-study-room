@@ -76,6 +76,8 @@ const ui = {
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 124;
 const MAX_CHAT_MESSAGES = 80;
+const MAX_CONTEXT_MESSAGES = 30;
+const MAX_CONTEXT_MESSAGE_CHARS = 800;
 let completingFocus = false;
 let petSpeechTimer = null;
 let petMoodTimer = null;
@@ -2150,10 +2152,22 @@ function toLocalIsoString(date) {
   )}`;
 }
 
-function currentRemoteContext(enableSkill) {
+function currentRemoteContext(enableSkill, currentText = "") {
   const now = new Date();
   const today = toDateKey(now);
   const horizon = toDateKey(addDays(now, 14));
+  const historyMessages = activeMessages().filter((message) => {
+    const text = String(message.text || "").trim();
+    return text && message.kind !== "emote" && message.kind !== "sticker";
+  });
+  const latestHistory = historyMessages[historyMessages.length - 1];
+  if (
+    currentText &&
+    latestHistory?.role === "user" &&
+    String(latestHistory.text || "").trim() === currentText.trim()
+  ) {
+    historyMessages.pop();
+  }
   const upcomingTasks = enableSkill
     ? state.tasks
         .filter((task) => task.dateKey >= today && task.dateKey <= horizon)
@@ -2170,9 +2184,9 @@ function currentRemoteContext(enableSkill) {
       userName: state.settings.userName || "主人",
       petName: state.settings.petName || "大肥鱼",
     },
-    history: activeMessages().slice(-8).map((message) => ({
+    history: historyMessages.slice(-MAX_CONTEXT_MESSAGES).map((message) => ({
       role: message.role,
-      text: message.text.slice(0, 500),
+      text: String(message.text).slice(0, MAX_CONTEXT_MESSAGE_CHARS),
     })),
     tasks: upcomingTasks.map((task) => ({
       id: task.id,
@@ -2213,7 +2227,7 @@ async function requestRemoteAssistant(text, { forceChatOnly = false } = {}) {
       },
       body: JSON.stringify({
         message: text,
-        context: currentRemoteContext(enableSkill),
+        context: currentRemoteContext(enableSkill, text),
         enableSkill,
         personaPrompt: state.settings.customPersonaPrompt || "",
         model: state.settings.aiModel || "deepseek-chat",
