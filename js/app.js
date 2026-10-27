@@ -556,7 +556,7 @@ async function openPersonaPromptModal() {
         <label class="field">
           <span>人设 / 系统提示词</span>
           <textarea name="prompt" rows="16" maxlength="16000" required>${escapeHtml(
-            currentPrompt || "无法从本机服务读取默认人设，请确认 server.mjs 正在运行。",
+            currentPrompt || "无法从本机服务读取默认人设，请确认 local-server.mjs 正在运行。",
           )}</textarea>
         </label>
         <p class="field-note">聊天入口仍然使用独立的应用接口协议；这里只控制角色人设和默认语气。</p>
@@ -2338,7 +2338,7 @@ function openApiSettingsModal() {
     } catch (error) {
       submit.disabled = false;
       submit.textContent = "验证并连接";
-      showToast(error.message || "连接失败，确认本机 server.mjs 正在运行。");
+      showToast(error.message || "连接失败，确认本机 local-server.mjs 正在运行。");
     }
   });
 }

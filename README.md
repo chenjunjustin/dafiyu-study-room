@@ -7,7 +7,7 @@
 
 ```bash
 cd demo
-node server.mjs
+node local-server.mjs
 ```
 
 打开 `http://127.0.0.1:4173`。
@@ -15,7 +15,7 @@ node server.mjs
 如果系统 PATH 中没有 `node`，可以使用当前环境提供的运行时：
 
 ```bash
-/Users/a0000/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node server.mjs
+/Users/a0000/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node local-server.mjs
 ```
 
 ## 可选：接入真实 DeepSeek
@@ -27,7 +27,7 @@ node server.mjs
 ```bash
 cp .env.example .env
 # 编辑 .env，填入 DEEPSEEK_API_KEY
-node server.mjs
+node local-server.mjs
 ```
 
 也可以直接打开页面右侧对话舱的钥匙按钮，在配置页填入 Key。验证通过后，Key 只保存在当前标签页的 `sessionStorage`，用于同源 API 代理请求；不会写入仓库、localStorage 或导出文件，关闭标签页后失效。
@@ -109,7 +109,7 @@ Live2D 运行时与模型已放在 `assets/live2d` 和 `assets/vendor`：
 - 文件：`dafeiyu/SKILL.md`、`dafeiyu/references/lines.md`、`dafeiyu/references/lore.md`
 - 许可：MIT
 
-原文保存在 `personas/dafeiyu/`，未改写其角色设定与说话风格。自习室的数据确认、工具边界和安全规则在 `server.mjs` 中作为独立应用规则拼在 persona 之后加载。
+原文保存在 `personas/dafeiyu/`，未改写其角色设定与说话风格。自习室的数据确认、工具边界和安全规则在 `local-server.mjs` 中作为独立应用规则拼在 persona 之后加载。
 
 API 请求中的人设作为第一条 system message 原样发送；单独的第二条 system message 只定义 JSON / action 接口，不再加入额外角色语气。
 
