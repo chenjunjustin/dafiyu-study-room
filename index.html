@@ -10,7 +10,7 @@
     />
     <title>大肥鱼自习室 · Live2D Demo</title>
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles-v2.css?v=2.0.18" />
+    <link rel="stylesheet" href="./styles-v2.css?v=2.0.19" />
   </head>
   <body data-view="today">
     <div class="deep-bg" aria-hidden="true">
@@ -180,9 +180,14 @@
                 <div>
                   <p class="section-eyebrow"><span></span> DEEPSEEK WHALE · COMPANION</p>
                 </div>
-                <div class="live-mood-chip" id="live-mood-chip">
-                  <span class="live-mood-dot"></span>
-                  <span>悠闲游着</span>
+                <div class="live-header-actions">
+                  <button class="home-next-restore" type="button" id="show-next-task" hidden>
+                    今日推荐
+                  </button>
+                  <div class="live-mood-chip" id="live-mood-chip">
+                    <span class="live-mood-dot"></span>
+                    <span>悠闲游着</span>
+                  </div>
                 </div>
               </div>
 
@@ -219,12 +224,17 @@
               </div>
 
               <div class="home-lower">
-                <button class="home-next-card" type="button" id="next-task-focus">
-                  <span class="home-next-kicker">NEXT LITTLE THING</span>
-                  <strong id="next-task-title">今天还没有安排</strong>
-                  <span id="next-task-meta">给自己留 25 分钟，也算好好开始。</span>
-                  <span class="home-next-cta">开始这一小段 <svg class="icon"><use href="#icon-arrow-right"></use></svg></span>
-                </button>
+                <div class="home-next-slot" id="home-next-slot">
+                  <button class="home-next-card" type="button" id="next-task-focus">
+                    <span class="home-next-kicker">NEXT LITTLE THING</span>
+                    <strong id="next-task-title">今天还没有安排</strong>
+                    <span id="next-task-meta">给自己留 25 分钟，也算好好开始。</span>
+                    <span class="home-next-cta">开始这一小段 <svg class="icon"><use href="#icon-arrow-right"></use></svg></span>
+                  </button>
+                  <button class="home-next-hide" type="button" id="hide-next-task" aria-label="隐藏今日推荐卡" title="隐藏今日推荐">
+                    <svg class="icon"><use href="#icon-close"></use></svg>
+                  </button>
+                </div>
                 <div class="home-stats" id="today-stats"></div>
               </div>
 
@@ -505,6 +515,6 @@
     <script src="./assets/vendor/pixi.min.js"></script>
     <script src="./assets/vendor/live2dcubismcore.min.js"></script>
     <script src="./assets/vendor/cubism4.min.js"></script>
-    <script type="module" src="./js/app.js?v=2.2.7"></script>
+    <script type="module" src="./js/app.js?v=2.2.8"></script>
   </body>
 </html>

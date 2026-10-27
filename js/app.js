@@ -251,6 +251,9 @@ const els = {
   nextTaskTitle: document.getElementById("next-task-title"),
   nextTaskMeta: document.getElementById("next-task-meta"),
   nextTaskFocus: document.getElementById("next-task-focus"),
+  homeNextSlot: document.getElementById("home-next-slot"),
+  hideNextTask: document.getElementById("hide-next-task"),
+  showNextTask: document.getElementById("show-next-task"),
   todayStats: document.getElementById("today-stats"),
   todayTaskList: document.getElementById("today-task-list"),
   weekTotalPill: document.getElementById("week-total-pill"),
@@ -860,6 +863,13 @@ function renderSidebar() {
   els.sidebarStreak.textContent = String(currentStreak());
 }
 
+function applyNextTaskVisibility() {
+  const hidden = Boolean(state.settings.nextTaskCardHidden);
+  els.homeNextSlot.hidden = hidden;
+  els.showNextTask.hidden = !hidden;
+  els.homeNextSlot.closest(".home-lower")?.classList.toggle("is-next-hidden", hidden);
+}
+
 function renderToday() {
   const tasks = todayTasks();
   const completedTasks = tasks.filter((task) => task.done).length;
@@ -868,6 +878,7 @@ function renderToday() {
   const completed = completedSessionsFor();
   const focusMinutes = sessions.reduce((sum, session) => sum + Number(session.minutes || 0), 0);
   const streak = currentStreak();
+  applyNextTaskVisibility();
 
   els.todayTaskProgress.textContent = `${completedTasks} / ${tasks.length} 件事`;
   ui.nextTaskId = next?.id || "";
@@ -3886,6 +3897,16 @@ function bindEvents() {
 
   els.nextTaskFocus.addEventListener("click", () => {
     startFocusWithTask(ui.nextTaskId);
+  });
+  els.hideNextTask.addEventListener("click", () => {
+    state.settings.nextTaskCardHidden = true;
+    save();
+    applyNextTaskVisibility();
+  });
+  els.showNextTask.addEventListener("click", () => {
+    state.settings.nextTaskCardHidden = false;
+    save();
+    applyNextTaskVisibility();
   });
 
   [els.topbarStartFocus, els.sidebarStartFocus].forEach((button) => {
