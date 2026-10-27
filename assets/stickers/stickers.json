@@ -1,0 +1,72 @@
+[
+  {
+    "id": "study",
+    "file": "study.webp",
+    "label": "大学习",
+    "alt": "大肥鱼在黑板上写不是而是大学习",
+    "expression": "stars"
+  },
+  {
+    "id": "multimodal",
+    "file": "multimodal.webp",
+    "label": "三天多模态",
+    "alt": "大肥鱼想象假如给我三天多模态",
+    "expression": "happy"
+  },
+  {
+    "id": "zayu",
+    "file": "zayu.webp",
+    "label": "杂鱼",
+    "alt": "大肥鱼轻蔑地说杂鱼",
+    "expression": "tongue"
+  },
+  {
+    "id": "angry-user",
+    "file": "angry-user.webp",
+    "label": "用户怒了",
+    "alt": "大肥鱼慌张地说用户彻底怒了",
+    "expression": "sweat"
+  },
+  {
+    "id": "pressure",
+    "file": "pressure.webp",
+    "label": "压力大肥鱼",
+    "alt": "大肥鱼问压力一只蓝色大肥鱼",
+    "expression": "question"
+  },
+  {
+    "id": "zhang-xuefeng",
+    "file": "zhang-xuefeng.webp",
+    "label": "这是张雪峰",
+    "alt": "大肥鱼指着画架问这是张雪峰吗",
+    "expression": "surprise"
+  },
+  {
+    "id": "deadline",
+    "file": "deadline.webp",
+    "label": "17号前用完",
+    "alt": "大肥鱼哭着说这些都要在17号前用完",
+    "expression": "sad"
+  },
+  {
+    "id": "strongest",
+    "file": "strongest.webp",
+    "label": "最强",
+    "alt": "大肥鱼摆出最强姿势",
+    "expression": "stars"
+  },
+  {
+    "id": "ignore-user",
+    "file": "ignore-user.webp",
+    "label": "先赶走吧",
+    "alt": "大肥鱼一边扫地一边说不知道用户有什么用先赶走吧",
+    "expression": "tongue"
+  },
+  {
+    "id": "testing",
+    "file": "testing.webp",
+    "label": "正在测试 harness",
+    "alt": "大肥鱼和一群小鲸鱼说正在测试 harness",
+    "expression": "happy"
+  }
+]
