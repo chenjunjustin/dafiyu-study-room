@@ -3,10 +3,7 @@
   "functions": {
     "api/*.js": {
       "maxDuration": 30,
-      "includeFiles": [
-        "personas/**",
-        "assets/personas/**"
-      ]
+      "includeFiles": "{personas/**,assets/personas/**}"
     }
   }
 }
