@@ -24,6 +24,21 @@ import {
   localAssistantReply,
   normalizeRemoteActions,
 } from "./assistant.js";
+import {
+  LIVE2D_ACTION_ITEMS,
+  LIVE2D_EXPRESSION_ALIASES,
+  LIVE2D_EXPRESSION_NAMES,
+  LIVE2D_FACE_ITEMS,
+  LIVE2D_MOTION_DURATIONS,
+  LIVE2D_MOTION_IDS,
+  LIVE2D_MOTION_ITEMS,
+  LIVE2D_PARAM_MAPS,
+  LIVE2D_PROP_ITEMS,
+  LIVE2D_SCENE_ITEMS,
+  live2DActionById,
+  live2DPropById,
+  resolveLive2DExpression,
+} from "./live2d-catalog.js";
 
 const searchParams = new URLSearchParams(window.location.search);
 if (searchParams.get("reset") === "1") {
@@ -69,11 +84,19 @@ let live2dModel = null;
 let live2dReady = false;
 let live2dMood = "";
 let live2dResizeObserver = null;
-let activeExpressionParams = new Map();
 let expressionResetTimer = null;
 let expressionLockUntil = 0;
 let idleInteractionTimer = null;
 let idleLookAroundTimer = null;
+let motionResetTimer = null;
+const live2dRig = {
+  face: null,
+  faceUntil: 0,
+  persistentProps: new Set(),
+  temporaryProps: new Map(),
+  weights: new Map(),
+  lastFrameAt: 0,
+};
 
 const PET_LINES = [
   "*（其实本鱼刚刚也在摸鱼……）* 先做 25 分钟吧。",
@@ -123,6 +146,11 @@ const PROACTIVE_TRIGGER =
   "（系统定时器：当前没有新的用户消息。请结合最近对话自然主动开口，最多两句；不要提到定时器或系统，不要安排任务、不要催专注。）";
 const SESSION_API_KEY = "dafiyu-deepseek-session-key";
 
+const FACE_ITEM_BY_ID = new Map(LIVE2D_FACE_ITEMS.map((item) => [item.id, item]));
+const PROP_ITEM_BY_ID = new Map(
+  [...LIVE2D_PROP_ITEMS, ...LIVE2D_SCENE_ITEMS].map((item) => [item.id, item]),
+);
+
 const EXPRESSION_MOTIONS = {
   happy: "aidale",
   blush: "selfieQuick",
@@ -136,85 +164,40 @@ const EXPRESSION_MOTIONS = {
   surprise: "openLid",
   dizzy: "splash",
   whale: "ketchup",
+  开心兴奋: "aidale",
+  脸红: "selfieQuick",
+  爱心眼: "aidale",
+  星星眼: "selfie",
+  流汗: "bubble",
+  生气: "splash",
+  悲伤: "openLid",
+  吐舌: "selfieQuick",
+  问号: "bubble",
+  感叹号: "openLid",
+  晕晕: "splash",
+  鲸鱼: "ketchup",
 };
 
-const EXPRESSION_LABELS = {
-  happy: "开心",
-  blush: "脸红",
-  love: "爱心眼",
-  stars: "星星眼",
-  sweat: "流汗",
-  angry: "生气",
-  sad: "委屈",
-  tongue: "吐舌",
-  whale: "鲸鱼",
-  question: "问号",
-  surprise: "震惊",
-  dizzy: "晕晕",
-};
+const EXPRESSION_LABELS = Object.fromEntries(
+  Object.entries(LIVE2D_EXPRESSION_ALIASES).map(([alias, canonical]) => [
+    alias,
+    FACE_ITEM_BY_ID.get(canonical)?.label || canonical,
+  ]),
+);
+for (const item of LIVE2D_FACE_ITEMS) EXPRESSION_LABELS[item.id] = item.label;
+for (const name of LIVE2D_EXPRESSION_NAMES) {
+  if (!EXPRESSION_LABELS[name]) EXPRESSION_LABELS[name] = name;
+}
 
-const EXPRESSION_PARAMS = {
-  happy: {
-    ParamCheek76: 1,
-    ParamEyeLOpen: 0,
-    ParamEyeROpen: 0,
-    ParamMouthForm: 1,
-  },
-  blush: { Paramhh2: 1, ParamCheek76: 0.35 },
-  love: { ParamCheek17: 1, Paramhh2: 1, ParamMouthForm: 0.8 },
-  stars: { ParamCheek16: 1, ParamMouthOpenY: 0.45, ParamMouthForm: 1 },
-  sweat: { ParamCheek19: 1, ParamBrowLAngle: -0.55, ParamBrowRAngle: -0.55 },
-  angry: {
-    ParamCheek80: 1,
-    ParamCheek23: 1,
-    ParamBrowLX: -1,
-    ParamBrowLY: -0.5,
-    ParamBrowRX: -1,
-    ParamBrowRY: -0.5,
-  },
-  sad: { ParamCheek27: 1, ParamCheek15: 1, ParamMouthForm: -1.2 },
-  tongue: {
-    ParamCheek79: 1,
-    ParamBrowRForm2: 0.9,
-    ParamMouthOpenY: 0.7,
-  },
-  whale: { jingyu: 1, pengshui: 1, ParamCheek76: 0.35 },
-  question: { ParamCheek74: 1 },
-  surprise: { ParamCheek75: 1, ParamMouthOpenY: 1, ParamEyeLOpen: 1.15 },
-  dizzy: {
-    ParamCheek77: 1,
-    ParamEyeLOpen: 0.45,
-    ParamEyeROpen: 0.45,
-    ParamBrowLForm: 1,
-    ParamBrowRForm: 1,
-  },
-};
+const EXPRESSION_EFFECTS = Object.fromEntries(
+  LIVE2D_FACE_ITEMS.map((item) => [item.id, item.effect || ["✦"]]),
+);
+EXPRESSION_EFFECTS.love = ["♥", "♥", "♡", "♥"];
+EXPRESSION_EFFECTS.心跳 = ["♥", "♥"];
+EXPRESSION_EFFECTS.双手比耶 = ["✌", "✦"];
+EXPRESSION_EFFECTS.蛋包饭 = ["🍳", "♥"];
 
-const EXPRESSION_EFFECTS = {
-  happy: ["✦", "✧", "♪"],
-  blush: ["♡", "♡", "✿"],
-  love: ["♥", "♥", "♡", "♥"],
-  stars: ["✦", "✧", "✦", "✧", "★"],
-  sweat: ["💧", "💧"],
-  angry: ["💢", "＃"],
-  sad: ["💧", "💧", "…"],
-  tongue: ["😋", "♪"],
-  whale: ["🐋", "🫧", "🫧"],
-  question: ["?", "?"],
-  surprise: ["!", "!"],
-  dizzy: ["💫", "✧", "🌀"],
-};
-
-const PET_MOTION_MENU = [
-  { id: "aidale", label: "摇摇鱼鳍", expression: "happy" },
-  { id: "bubble", label: "吹泡泡", expression: "sweat" },
-  { id: "selfie", label: "自拍一下", expression: "stars" },
-  { id: "selfieQuick", label: "快速自拍", expression: "blush" },
-  { id: "ketchup", label: "番茄酱", expression: "tongue" },
-  { id: "openLid", label: "打开盖子", expression: "surprise" },
-  { id: "splash", label: "甩水花", expression: "angry" },
-  { id: "idle", label: "安静待着", expression: null },
-];
+const PET_MOTION_MENU = LIVE2D_MOTION_ITEMS;
 
 const SKILL_MODES = {
   create: {
@@ -316,6 +299,10 @@ const els = {
   openEmotePanel: document.getElementById("open-emote-panel"),
   emotePanel: document.getElementById("emote-panel"),
   emoteLive: document.getElementById("emote-live"),
+  emoteProps: document.getElementById("emote-props"),
+  emoteScenes: document.getElementById("emote-scenes"),
+  emoteActions: document.getElementById("emote-actions"),
+  resetLive2DState: document.getElementById("reset-live2d-state"),
   emoteStickers: document.getElementById("emote-stickers"),
   openConversationPanel: document.getElementById("open-conversation-panel"),
   conversationPanel: document.getElementById("conversation-panel"),
@@ -1733,12 +1720,45 @@ function renderStickerChoices() {
   ).join("");
 }
 
+function renderFaceChoices() {
+  els.emoteLive.innerHTML = LIVE2D_FACE_ITEMS.map(
+    (item) =>
+      `<button type="button" data-live-expression="${escapeHtml(item.id)}"
+        data-expression-label="${escapeHtml(item.label)}">${escapeHtml(item.label)}</button>`,
+  ).join("");
+}
+
+function propButtonMarkup(item) {
+  const active = live2dRig.persistentProps.has(item.id);
+  return `<button class="${active ? "is-on" : ""}" type="button" data-live-prop="${escapeHtml(
+    item.id,
+  )}" aria-pressed="${active}">${escapeHtml(item.label)}</button>`;
+}
+
+function renderPropChoices() {
+  els.emoteProps.innerHTML = LIVE2D_PROP_ITEMS.map(propButtonMarkup).join("");
+  els.emoteScenes.innerHTML = LIVE2D_SCENE_ITEMS.map(propButtonMarkup).join("");
+}
+
+function renderActionChoices() {
+  els.emoteActions.innerHTML = LIVE2D_ACTION_ITEMS.map(
+    (item) =>
+      `<button type="button" data-live-action="${escapeHtml(item.id)}">${escapeHtml(
+        item.label,
+      )}</button>`,
+  ).join("");
+}
+
 function setEmoteTab(tab) {
   document.querySelectorAll("[data-emote-tab]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.emoteTab === tab);
   });
   els.emoteLive.hidden = tab !== "live";
+  els.emoteProps.hidden = tab !== "props";
+  els.emoteScenes.hidden = tab !== "scenes";
+  els.emoteActions.hidden = tab !== "actions";
   els.emoteStickers.hidden = tab !== "stickers";
+  if (tab === "props" || tab === "scenes") renderPropChoices();
 }
 
 function setSkillMode(mode) {
@@ -1888,13 +1908,7 @@ async function triggerProactiveMessage({ manual = false } = {}) {
   renderChat();
   if (ui.view === "today") {
     speakAsPet(response.reply.slice(0, 60), 7200);
-    if (response.expression) {
-      playLive2DExpression(response.expression);
-      if (EXPRESSION_MOTIONS[response.expression]) {
-        playLive2DMotion(EXPRESSION_MOTIONS[response.expression]);
-      }
-      resetExpressionSoon(4300);
-    }
+    applyLive2DPerformance(response);
     if (autoSticker) {
       playLive2DExpression(autoSticker.expression);
       playLive2DMotion("aidale");
@@ -1912,6 +1926,9 @@ function toggleEmotePanel(force) {
   els.openEmotePanel.setAttribute("aria-expanded", String(shouldOpen));
   if (shouldOpen) {
     toggleConversationPanel(false);
+    renderFaceChoices();
+    renderPropChoices();
+    renderActionChoices();
     renderStickerChoices();
     requestAnimationFrame(() => {
       els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
@@ -1953,25 +1970,18 @@ function toggleConversationPanel(force) {
 }
 
 function resetExpressionSoon(delay = 3800) {
-  if (!activeExpressionParams.size) return;
+  if (!live2dRig.face) return;
   clearTimeout(expressionResetTimer);
   expressionLockUntil = performance.now() + delay;
+  live2dRig.faceUntil = expressionLockUntil;
   expressionResetTimer = setTimeout(() => {
     if (performance.now() < expressionLockUntil - 40) return;
     clearTimeout(expressionResetTimer);
-    activeExpressionParams.clear();
-    try {
-      const expressionManager =
-        live2dModel?.internalModel?.motionManager?.expressionManager;
-      expressionManager?.stopAllExpressions?.();
-      expressionManager?.resetExpression?.();
-    } catch {
-      // The model can fall back to its neutral face.
-    }
+    live2dRig.face = null;
+    live2dRig.faceUntil = 0;
     delete els.petMascot.dataset.expression;
     delete els.petMascot.dataset.expressionParams;
-    live2dMood = "";
-    applyLive2DMood(els.petMascot.dataset.mood || "idle");
+    updateLive2DMoodLabel();
   }, delay);
 }
 
@@ -2208,6 +2218,8 @@ async function requestRemoteAssistant(text, { forceChatOnly = false } = {}) {
       reply: data.reply.trim(),
       actions: normalizeRemoteActions(data.actions, state),
       expression: data.expression || null,
+      motion: data.motion || null,
+      props: Array.isArray(data.props) ? data.props : [],
       sticker: data.sticker || null,
       remote: true,
     };
@@ -2405,11 +2417,11 @@ async function sendChatMessage(rawText, { clearInput = false, forceChatOnly = fa
   renderChat();
   renderProposalPrompt(proposals.length);
   speakAsPet(displayReply.slice(0, 50), 6400);
-  if (autoExpression) {
-    playLive2DExpression(autoExpression);
-    if (EXPRESSION_MOTIONS[autoExpression]) playLive2DMotion(EXPRESSION_MOTIONS[autoExpression]);
-    resetExpressionSoon(4200);
-  }
+  applyLive2DPerformance({
+    expression: autoExpression,
+    motion: response.motion,
+    props: response.props,
+  });
   if (autoSticker) {
     playLive2DExpression(autoSticker.expression);
     playLive2DMotion("aidale");
@@ -2960,21 +2972,49 @@ function focusLive2DAtCenter() {
   }
 }
 
-function playLive2DMotion(name) {
+function clearLive2DMotionPose() {
+  if (!live2dReady || !live2dModel) return;
+  const coreModel = live2dModel.internalModel?.coreModel;
+  const parameters = coreModel?._model?.parameters;
+  if (!coreModel || !parameters) return;
+  try {
+    live2dModel.internalModel?.motionManager?.stopAllMotions?.();
+    for (let index = 0; index < parameters.count; index += 1) {
+      const defaultValue = parameters.defaultValues[index];
+      if (Number.isFinite(defaultValue)) {
+        coreModel.setParameterValueByIndex(index, defaultValue);
+      }
+    }
+    coreModel.saveParameters?.();
+  } catch {
+    // Returning to the neutral pose is best-effort.
+  }
+}
+
+function playLive2DMotion(name, durationMs) {
   if (!live2dReady || !live2dModel) return;
   try {
     live2dModel.motion(name);
+    clearTimeout(motionResetTimer);
+    const duration = Number(durationMs) || (LIVE2D_MOTION_DURATIONS[name] || 1.5) * 1000;
+    motionResetTimer = setTimeout(() => {
+      clearLive2DMotionPose();
+    }, duration + 140);
   } catch (error) {
     console.warn(`Live2D motion unavailable: ${name}`, error);
   }
 }
 
-function spawnExpressionEffect(name) {
+function spawnExpressionEffect(nameOrSymbols) {
   if (!els.petStage) return;
-  const symbols = EXPRESSION_EFFECTS[name] || ["✦"];
+  const symbols = Array.isArray(nameOrSymbols)
+    ? nameOrSymbols
+    : EXPRESSION_EFFECTS[nameOrSymbols] || ["✦"];
   const layer = document.createElement("div");
   layer.className = "expression-effect";
-  layer.dataset.expression = name;
+  layer.dataset.expression = Array.isArray(nameOrSymbols)
+    ? "custom"
+    : nameOrSymbols;
   layer.innerHTML = symbols
     .map((symbol, index) => {
       const spread = symbols.length > 1 ? index / (symbols.length - 1) : 0.5;
@@ -2998,65 +3038,40 @@ function spawnExpressionEffect(name) {
 }
 
 function setLiveExpressionNow(name) {
-  const params = EXPRESSION_PARAMS[name];
-  if (!params) return false;
-  activeExpressionParams.clear();
-  Object.entries(params).forEach(([id, value]) => {
-    activeExpressionParams.set(id, value);
-  });
-  els.petMascot.dataset.expression = name;
+  const resolved = resolveLive2DExpression(name);
+  const params = LIVE2D_PARAM_MAPS[resolved];
+  if (!resolved || !params) return false;
+  live2dRig.face = resolved;
+  els.petMascot.dataset.expression = resolved;
   els.petMascot.dataset.expressionParams = JSON.stringify(params);
   if (els.liveMoodChip) {
     els.liveMoodChip.querySelector("span:last-child").textContent =
-      EXPRESSION_LABELS[name] || name;
+      EXPRESSION_LABELS[resolved] || resolved;
   }
-  if (!live2dReady || !live2dModel) return false;
-  try {
-    live2dModel.expression(name);
-    return true;
-  } catch (error) {
-    console.warn(`Live2D expression unavailable: ${name}`, error);
-    return false;
-  }
+  return true;
 }
 
 function playLive2DExpression(name, { duration = 4300, effect = true } = {}) {
-  if (!EXPRESSION_PARAMS[name]) return;
+  const resolved = resolveLive2DExpression(name);
+  if (!resolved) return;
   expressionLockUntil = performance.now() + duration;
-  setLiveExpressionNow(name);
-  if (effect) spawnExpressionEffect(name);
+  live2dRig.faceUntil = expressionLockUntil;
+  setLiveExpressionNow(resolved);
+  if (effect) spawnExpressionEffect(resolved);
   resetExpressionSoon(duration);
 }
 
-function applyLive2DMood(mood) {
-  if (performance.now() < expressionLockUntil) return;
-  if (!live2dReady || live2dMood === mood) return;
-  live2dMood = mood;
-  const expression = {
-    happy: "happy",
-    focus: "stars",
-    sleepy: "sad",
-    comfort: "blush",
+function moodExpression(mood) {
+  return {
+    happy: "开心兴奋",
+    focus: "星星眼",
+    sleepy: "闭眼口水",
+    comfort: "脸红",
   }[mood];
-  if (expression) setLiveExpressionNow(expression);
-  else {
-    try {
-      const expressionManager =
-        live2dModel.internalModel?.motionManager?.expressionManager;
-      expressionManager?.stopAllExpressions?.();
-      expressionManager?.resetExpression?.();
-      activeExpressionParams.clear();
-      delete els.petMascot.dataset.expression;
-      delete els.petMascot.dataset.expressionParams;
-    } catch {
-      // The default expression is already active on older model runtimes.
-    }
-  }
-  if (mood === "happy") playLive2DMotion("aidale");
 }
 
-function applyMoodVisual(mood) {
-  els.petMascot.dataset.mood = mood;
+function updateLive2DMoodLabel() {
+  if (!els.liveMoodChip) return;
   const labels = {
     idle: "悠闲游着",
     happy: "被摸开心",
@@ -3064,10 +3079,288 @@ function applyMoodVisual(mood) {
     sleepy: "有点打盹",
     comfort: "安静陪着",
   };
-  if (els.liveMoodChip) {
-    els.liveMoodChip.querySelector("span:last-child").textContent = labels[mood] || labels.idle;
+  if (live2dRig.face) {
+    els.liveMoodChip.querySelector("span:last-child").textContent =
+      EXPRESSION_LABELS[live2dRig.face] || live2dRig.face;
+    return;
   }
+  els.liveMoodChip.querySelector("span:last-child").textContent =
+    labels[live2dMood] || labels.idle;
+}
+
+function applyLive2DMood(mood) {
+  if (!live2dReady || live2dMood === mood) return;
+  live2dMood = mood;
+  if (!live2dRig.face) updateLive2DMoodLabel();
+  if (mood === "happy") playLive2DMotion("aidale");
+}
+
+function applyMoodVisual(mood) {
+  els.petMascot.dataset.mood = mood;
   applyLive2DMood(mood);
+  if (!live2dRig.face) updateLive2DMoodLabel();
+}
+
+function propExpression(propId) {
+  const item = PROP_ITEM_BY_ID.get(propId);
+  return item ? resolveLive2DExpression(item.expr) : null;
+}
+
+const LIVE2D_PROP_LINES = {
+  glassesRound: "圆框眼镜，像不像认真学习的本鱼？",
+  glassesSquare: "方框一戴，本鱼现在很有学问。",
+  glassesOval: "椭圆镜片，温柔一点点。",
+  glassesSun: "墨镜一戴，谁也不爱。",
+  stickerCat: "喵。本鱼现在有猫猫贴纸了。",
+  stickerRabbit: "兔兔耳朵，蹦一下。",
+  stickerBow: "蝴蝶结。好看也不许一直盯。",
+  flower: "脑袋上开花了，心情也开了。",
+  ponytail: "扎个单边马尾，干活利索。",
+  headband: "发箍戴好，准备认真。",
+  whaleHat: "头顶一只小鲸鱼，和本鱼作伴。",
+  darkCloth: "深色桌布，今天走高级路线。",
+  whaleOnDesk: "小鲸鱼放桌上，陪着本鱼。",
+  parfait: "巴菲！这个是本鱼的，别抢。",
+  claws: "粉色魔爪，可爱但是会挠人。",
+  clawsWhite: "白色魔爪，看起来更厉害了。",
+  phone: "手机掏出来了，看看有没有新消息。",
+  phoneSkin: "换个手机壳，换个心情。",
+};
+
+const LIVE2D_ACTION_LINES = {
+  paw: "猫爪左右摆，喵喵喵。",
+  catPaw: "爪爪在这里，软的哦。",
+  doubleV: "双手比耶，今天也要赢。",
+  love: "爱心发射，收好。",
+  heartbeat: "扑通扑通……不是因为你，真的。",
+  squeeze: "Moe moe Q～再挤要变形了。",
+  eraser: "这段擦掉，本鱼重写。",
+  undo: "撤回撤回，刚才那句不算。",
+  omurice: "蛋包饭，番茄酱画个爱心。",
+  selfie: "先别眨眼，本鱼找个角度。",
+  selfieQuick: "咔嚓，一秒拍完。",
+  splash: "鲸鱼是会喷水的，噗——",
+  pointBoard: "点菜板拿好，今天想吃什么？",
+  pen: "笔也拿好，本鱼可以开始记了。",
+  stretch: "伸个懒腰，鱼鳍都舒展开了。",
+  bubble: "咕噜咕噜，吹个泡泡。",
+  openLid: "开盖看看，里面没有藏小鱼干。",
+  selfieMotion: "来，看镜头。",
+  selfieQuickMotion: "快速抓拍一张。",
+};
+
+function saveLive2DProps() {
+  state.settings.live2dProps = Array.from(live2dRig.persistentProps);
+  save();
+}
+
+function refreshLive2DPropButtons() {
+  if (els.emoteProps && !els.emoteProps.hidden) renderPropChoices();
+  if (els.emoteScenes && !els.emoteScenes.hidden) renderPropChoices();
+}
+
+function setLive2DProp(propId, force, { silent = false } = {}) {
+  const item = PROP_ITEM_BY_ID.get(propId);
+  if (!item) return false;
+  const enabled =
+    typeof force === "boolean" ? force : !live2dRig.persistentProps.has(propId);
+
+  if (enabled) {
+    if (item.requires) setLive2DProp(item.requires, true, { silent: true });
+    if (item.group) {
+      for (const other of PROP_ITEM_BY_ID.values()) {
+        if (other.id !== propId && other.group === item.group) {
+          live2dRig.persistentProps.delete(other.id);
+        }
+      }
+    }
+    for (const clearedId of item.clears || []) {
+      live2dRig.persistentProps.delete(clearedId);
+    }
+    live2dRig.persistentProps.add(propId);
+    if (item.motion) playLive2DMotion(item.motion);
+  } else {
+    live2dRig.persistentProps.delete(propId);
+    for (const other of PROP_ITEM_BY_ID.values()) {
+      if (other.requires === propId) live2dRig.persistentProps.delete(other.id);
+    }
+  }
+
+  saveLive2DProps();
+  refreshLive2DPropButtons();
+  if (!silent) {
+    speakAsPet(
+      enabled
+        ? LIVE2D_PROP_LINES[propId] || `${item.label}，摆好了。`
+        : `${item.label}收起来了。`,
+      3600,
+    );
+    if (enabled) spawnExpressionEffect(item.expr || item.label);
+  }
+  return enabled;
+}
+
+function setLive2DTemporaryProp(propId, duration = 7000) {
+  if (!PROP_ITEM_BY_ID.has(propId)) return;
+  live2dRig.temporaryProps.set(propId, performance.now() + duration);
+  refreshLive2DPropButtons();
+}
+
+function clearLive2DProps() {
+  live2dRig.persistentProps.clear();
+  live2dRig.temporaryProps.clear();
+  saveLive2DProps();
+  refreshLive2DPropButtons();
+}
+
+function resetLive2DPetState() {
+  clearLive2DProps();
+  clearTimeout(expressionResetTimer);
+  live2dRig.face = null;
+  live2dRig.faceUntil = 0;
+  live2dRig.weights.clear();
+  expressionLockUntil = 0;
+  live2dMood = "";
+  delete els.petMascot.dataset.expression;
+  delete els.petMascot.dataset.expressionParams;
+  delete els.petMascot.dataset.aiProps;
+  clearTimeout(motionResetTimer);
+  clearLive2DMotionPose();
+  updatePetMood();
+  updateLive2DMoodLabel();
+  speakAsPet("好啦，本子、笔和本鱼都归位了。", 3200);
+}
+
+function performLive2DAction(actionId) {
+  const action = live2DActionById(actionId);
+  if (!action) return;
+  const duration = action.duration || 3400;
+
+  if (action.requires) {
+    setLive2DTemporaryProp(action.requires, duration + 1400);
+    if (action.requires === "phone" && ["selfie", "selfieQuick", "selfieMotion", "selfieQuickMotion"].includes(action.id)) {
+      playLive2DMotion("openLid", 900);
+      setTimeout(() => playLive2DMotion(action.motion, duration), 420);
+    } else if (action.motion) {
+      playLive2DMotion(action.motion, duration);
+    }
+  } else if (action.motion) {
+    playLive2DMotion(action.motion, duration);
+  }
+
+  if (action.expression) {
+    playLive2DExpression(action.expression, {
+      duration,
+      effect: false,
+    });
+  }
+  if (action.effect) spawnExpressionEffect(action.effect);
+  speakAsPet(LIVE2D_ACTION_LINES[action.id] || action.label, 3600);
+}
+
+function applyLive2DPerformance(performance = {}) {
+  const expression = resolveLive2DExpression(performance.expression);
+  const motion = LIVE2D_MOTION_IDS.has(performance.motion) ? performance.motion : null;
+  const props = Array.isArray(performance.props)
+    ? performance.props.filter((id) => PROP_ITEM_BY_ID.has(id)).slice(0, 3)
+    : [];
+  if (expression) {
+    playLive2DExpression(expression, {
+      duration: 5200,
+      effect: true,
+    });
+  }
+  for (const propId of props) {
+    setLive2DTemporaryProp(propId, 8500);
+    const item = PROP_ITEM_BY_ID.get(propId);
+    if (item?.motion && !motion) playLive2DMotion(item.motion);
+  }
+  if (motion) playLive2DMotion(motion);
+  if (props.length) els.petMascot.dataset.aiProps = props.join(",");
+}
+
+function applyLive2DRig() {
+  const coreModel = live2dModel?.internalModel?.coreModel;
+  if (!coreModel) return;
+  const now = performance.now();
+  const dt = Math.min(64, now - (live2dRig.lastFrameAt || now)) / 1000;
+  live2dRig.lastFrameAt = now;
+
+  if (
+    live2dRig.face &&
+    live2dRig.faceUntil &&
+    now >= live2dRig.faceUntil
+  ) {
+    live2dRig.face = null;
+    live2dRig.faceUntil = 0;
+    delete els.petMascot.dataset.expression;
+    delete els.petMascot.dataset.expressionParams;
+    updateLive2DMoodLabel();
+  }
+
+  for (const [propId, until] of live2dRig.temporaryProps) {
+    if (now >= until) live2dRig.temporaryProps.delete(propId);
+  }
+
+  const faceExpression =
+    live2dRig.face || resolveLive2DExpression(moodExpression(live2dMood));
+  const propExpressions = [];
+  for (const propId of live2dRig.persistentProps) {
+    const expression = propExpression(propId);
+    if (expression) propExpressions.push(expression);
+  }
+  for (const propId of live2dRig.temporaryProps.keys()) {
+    const expression = propExpression(propId);
+    if (expression) propExpressions.push(expression);
+  }
+
+  const targets = new Set();
+  if (faceExpression) targets.add(faceExpression);
+  propExpressions.forEach((name) => targets.add(name));
+
+  const names = new Set([...live2dRig.weights.keys(), ...targets]);
+  for (const name of names) {
+    const target = targets.has(name) ? 1 : 0;
+    let weight = live2dRig.weights.get(name) || 0;
+    const speed = target > weight ? 7 : 11;
+    weight += (target - weight) * Math.min(1, Math.max(0, dt * speed));
+    if (target === 0 && weight < 0.02) live2dRig.weights.delete(name);
+    else live2dRig.weights.set(name, weight);
+  }
+
+  const orderedNames = [];
+  if (faceExpression) orderedNames.push(faceExpression);
+  for (const name of propExpressions) {
+    if (!orderedNames.includes(name)) orderedNames.push(name);
+  }
+  for (const name of live2dRig.weights.keys()) {
+    if (!orderedNames.includes(name)) orderedNames.push(name);
+  }
+
+  const delta = new Map();
+  const claimed = new Set();
+  for (const name of orderedNames) {
+    const weight = live2dRig.weights.get(name) || 0;
+    if (weight <= 0.001) continue;
+    const params = LIVE2D_PARAM_MAPS[name];
+    if (!params) continue;
+    for (const [id, value] of Object.entries(params)) {
+      if (claimed.has(id)) continue;
+      claimed.add(id);
+      delta.set(id, (delta.get(id) || 0) + Number(value) * weight);
+    }
+  }
+
+  delta.forEach((value, id) => {
+    if (Math.abs(value) < 0.001) return;
+    try {
+      coreModel.addParameterValueById(id, value);
+    } catch {
+      // Ignore parameters that are absent in alternate model builds.
+    }
+  });
+  els.petMascot.dataset.rigActive = String(targets.size);
+  els.petMascot.dataset.rigFace = faceExpression || "";
 }
 
 async function initLive2D() {
@@ -3091,13 +3384,7 @@ async function initLive2D() {
     live2dApp.stage.addChild(live2dModel);
     fitLive2DModel();
     live2dReady = true;
-    const coreModel = live2dModel.internalModel?.coreModel;
-    live2dModel.internalModel?.on?.("beforeModelUpdate", () => {
-      if (!coreModel || activeExpressionParams.size === 0) return;
-      activeExpressionParams.forEach((value, id) => {
-        coreModel.setParameterValueById(id, value);
-      });
-    });
+    live2dModel.internalModel?.on?.("beforeModelUpdate", applyLive2DRig);
     els.petMascot.classList.add("is-ready");
     applyMoodVisual(els.petMascot.dataset.mood || "idle");
 
@@ -3312,15 +3599,19 @@ function scheduleIdleInteraction() {
       Date.now() - ui.lastPointerMoveAt > 5200;
     if (canInteract && live2dReady) {
       const roll = Math.random();
-      if (roll < 0.36) {
+      if (roll < 0.3) {
         const motions = PET_MOTION_MENU.filter((item) => item.id !== "idle");
         playLive2DMotion(motions[Math.floor(Math.random() * motions.length)].id);
-      } else if (roll < 0.56) {
-        const names = Object.keys(EXPRESSION_LABELS);
+      } else if (roll < 0.5) {
+        const props = Array.from(PROP_ITEM_BY_ID.keys());
+        const propId = props[Math.floor(Math.random() * props.length)];
+        setLive2DTemporaryProp(propId, 5200);
+      } else if (roll < 0.69) {
+        const names = LIVE2D_FACE_ITEMS.map((item) => item.id);
         playLive2DExpression(names[Math.floor(Math.random() * names.length)], {
           duration: 3000,
         });
-      } else if (roll < 0.64) {
+      } else if (roll < 0.76) {
         speakAsPet(pickPetLine(PROACTIVE_LINES), 4800);
         playLive2DExpression("question", { duration: 3200 });
       }
@@ -3478,6 +3769,18 @@ function handleGlobalClick(event) {
   const expression = target.closest("[data-live-expression]");
   if (expression) {
     sendLiveExpression(expression.dataset.liveExpression, expression.dataset.expressionLabel);
+    return;
+  }
+
+  const liveProp = target.closest("[data-live-prop]");
+  if (liveProp) {
+    setLive2DProp(liveProp.dataset.liveProp);
+    return;
+  }
+
+  const liveAction = target.closest("[data-live-action]");
+  if (liveAction) {
+    performLive2DAction(liveAction.dataset.liveAction);
     return;
   }
 
@@ -3657,6 +3960,7 @@ function bindEvents() {
   els.clearOtherConversationsButton.addEventListener("click", clearOtherConversations);
   els.editPersonaPrompt.addEventListener("click", openPersonaPromptModal);
   els.openEmotePanel.addEventListener("click", () => toggleEmotePanel());
+  els.resetLive2DState.addEventListener("click", resetLive2DPetState);
   els.openApiSettings.addEventListener("click", openApiSettingsModal);
 
   els.companionToggle.addEventListener("click", () => openCompanion({ focusInput: true }));
@@ -3750,6 +4054,11 @@ function init() {
   renderAll();
   bindEvents();
   initChatResize();
+  if (Array.isArray(state.settings.live2dProps)) {
+    for (const propId of state.settings.live2dProps) {
+      if (PROP_ITEM_BY_ID.has(propId)) live2dRig.persistentProps.add(propId);
+    }
+  }
   initLive2D();
   scheduleProactiveChat();
   scheduleIdleInteraction();

@@ -2,6 +2,15 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  LIVE2D_EXPRESSION_NAMES,
+  LIVE2D_MOTION_IDS,
+  LIVE2D_MOTION_ITEMS,
+  LIVE2D_PROP_ITEMS,
+  LIVE2D_PROP_KEYS,
+  LIVE2D_SCENE_ITEMS,
+  resolveLive2DExpression,
+} from "./js/live2d-catalog.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4173);
@@ -22,19 +31,6 @@ const PERSONA_PATH = path.join(ROOT, "personas", "dafeiyu", "persona.md");
 const PERSONA_PROMPT = fs.existsSync(PERSONA_PATH)
   ? fs.readFileSync(PERSONA_PATH, "utf8").trim()
   : "你扮演 DeepSeek 社区二创的蓝色鲸鱼娘「大肥鱼」。";
-const LIVE2D_EXPRESSIONS = new Set([
-  "happy",
-  "blush",
-  "love",
-  "stars",
-  "sweat",
-  "angry",
-  "sad",
-  "tongue",
-  "question",
-  "surprise",
-  "dizzy",
-]);
 const STICKER_IDS = new Set([
   "study",
   "multimodal",
@@ -124,17 +120,24 @@ async function readJsonBody(request) {
 }
 
 function actionProtocolPrompt() {
+  const expressions = Array.from(LIVE2D_EXPRESSION_NAMES).join("、");
+  const props = [...LIVE2D_PROP_ITEMS, ...LIVE2D_SCENE_ITEMS]
+    .map((item) => `${item.id}(${item.label})`)
+    .join("、");
+  const motions = LIVE2D_MOTION_ITEMS.map((item) => `${item.id}(${item.label})`).join("、");
   return `这是应用接口协议，不是角色语气提示。角色性格、口癖和表达方式完全由上一条人设 system message 决定。
 
 请返回严格 JSON：
-{"reply":"给用户看的 1-3 句中文","expression":null,"sticker":null,"actions":[]}
+{"reply":"给用户看的 1-3 句中文","expression":null,"motion":null,"props":[],"sticker":null,"actions":[]}
 
 默认 actions 为空，只正常聊天。只有用户明确要求安排、修改、删除日程，创建/删除专注计划，或开始专注时，才返回 action。
 
 表达动作（可选，不要求每轮使用）：
-- expression 可填：happy、blush、love、stars、sweat、angry、sad、tongue、question、surprise、dizzy，或 null。
+- expression 可填：${expressions}，或 null。
+- motion 可填：${motions}，或 null。动作是一次性的，不要每轮都播放。
+- props 可填 0-3 个道具/场景 ID：${props}。道具只做约 8 秒的表演，不会永久保存。
 - sticker 可填：study、multimodal、zayu、angry-user、pressure、zhang-xuefeng、deadline、strongest、ignore-user、testing，或 null。
-- 表情和表情包用于自然回应情绪，不要为了展示功能而滥用；一次最多各一个。
+- 表情、动作、道具和表情包用于自然表达情绪；根据对话内容自己决定，不必每轮都用，也不要在纯聊天里反复催专注。
 
 可用 actions，最多 3 个：
 1. {"type":"create_task","payload":{"title":"任务标题","dateKey":"YYYY-MM-DD","start":"HH:mm","duration":25,"priority":"low|medium|high","notes":""}}
@@ -157,14 +160,21 @@ function actionProtocolPrompt() {
 }
 
 function chatOnlyProtocolPrompt() {
+  const expressions = Array.from(LIVE2D_EXPRESSION_NAMES).join("、");
+  const props = [...LIVE2D_PROP_ITEMS, ...LIVE2D_SCENE_ITEMS]
+    .map((item) => `${item.id}(${item.label})`)
+    .join("、");
+  const motions = LIVE2D_MOTION_ITEMS.map((item) => `${item.id}(${item.label})`).join("、");
   return `这是应用接口协议，不是角色语气提示。角色性格、口癖和表达方式完全由上一条人设 system message 决定。
 
 本轮只是普通聊天，没有启用日程/专注技能。请返回严格 JSON：
-{"reply":"给用户看的回复","expression":null,"sticker":null,"actions":[]}
+{"reply":"给用户看的回复","expression":null,"motion":null,"props":[],"sticker":null,"actions":[]}
 
-expression 可填：happy、blush、love、stars、sweat、angry、sad、tongue、question、surprise、dizzy，或 null。
+expression 可填：${expressions}，或 null。
+motion 可填：${motions}，或 null。
+props 可填 0-3 个道具/场景 ID：${props}。
 sticker 可填：study、multimodal、zayu、angry-user、pressure、zhang-xuefeng、deadline、strongest、ignore-user、testing，或 null。
-表情和表情包用于自然表达情绪，可留空，不要每轮都用。
+表情、动作、道具和表情包用于自然表达情绪，可留空，不要每轮都用。
 actions 必须为空数组；不要催用户专注，不要擅自安排日程。`;
 }
 
@@ -179,7 +189,11 @@ function parseModelJson(content) {
   }
   return {
     reply: parsed.reply.trim().slice(0, 1600),
-    expression: LIVE2D_EXPRESSIONS.has(parsed.expression) ? parsed.expression : null,
+    expression: resolveLive2DExpression(parsed.expression),
+    motion: LIVE2D_MOTION_IDS.has(parsed.motion) ? parsed.motion : null,
+    props: Array.isArray(parsed.props)
+      ? parsed.props.filter((id) => LIVE2D_PROP_KEYS.has(id)).slice(0, 3)
+      : [],
     sticker: STICKER_IDS.has(parsed.sticker) ? parsed.sticker : null,
     actions: Array.isArray(parsed.actions) ? parsed.actions.slice(0, 3) : [],
   };

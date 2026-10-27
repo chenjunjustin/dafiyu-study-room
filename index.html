@@ -10,7 +10,7 @@
     />
     <title>大肥鱼自习室 · Live2D Demo</title>
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles-v2.css?v=2.0.16" />
+    <link rel="stylesheet" href="./styles-v2.css?v=2.0.18" />
   </head>
   <body data-view="today">
     <div class="deep-bg" aria-hidden="true">
@@ -300,23 +300,19 @@
 
               <div class="emote-panel" id="emote-panel" hidden>
                 <div class="emote-tabs" role="group" aria-label="表情类型">
-                  <button class="is-active" type="button" data-emote-tab="live">Live2D 表情</button>
+                  <button class="is-active" type="button" data-emote-tab="live">表情</button>
+                  <button type="button" data-emote-tab="props">装饰</button>
+                  <button type="button" data-emote-tab="scenes">场景</button>
+                  <button type="button" data-emote-tab="actions">动作</button>
                   <button type="button" data-emote-tab="stickers">表情包</button>
                 </div>
-                <div class="emote-live" id="emote-live">
-                  <button type="button" data-live-expression="happy" data-expression-label="开心">开心</button>
-                  <button type="button" data-live-expression="blush" data-expression-label="脸红">脸红</button>
-                  <button type="button" data-live-expression="love" data-expression-label="爱心眼">爱心眼</button>
-                  <button type="button" data-live-expression="stars" data-expression-label="星星眼">星星眼</button>
-                  <button type="button" data-live-expression="sweat" data-expression-label="流汗">流汗</button>
-                  <button type="button" data-live-expression="angry" data-expression-label="生气">生气</button>
-                  <button type="button" data-live-expression="sad" data-expression-label="委屈">委屈</button>
-                  <button type="button" data-live-expression="tongue" data-expression-label="吐舌">吐舌</button>
-                  <button type="button" data-live-expression="question" data-expression-label="问号">问号</button>
-                  <button type="button" data-live-expression="surprise" data-expression-label="震惊">震惊</button>
-                  <button type="button" data-live-expression="dizzy" data-expression-label="晕晕">晕晕</button>
-                  <button type="button" data-live-expression="whale" data-expression-label="鲸鱼">鲸鱼</button>
-                </div>
+                <button class="emote-reset-all" type="button" id="reset-live2d-state">
+                  全部归位 · 本子、笔、平常脸
+                </button>
+                <div class="emote-live" id="emote-live"></div>
+                <div class="emote-live" id="emote-props" hidden></div>
+                <div class="emote-live" id="emote-scenes" hidden></div>
+                <div class="emote-actions" id="emote-actions" hidden></div>
                 <div class="emote-stickers" id="emote-stickers" hidden></div>
                 <p class="emote-credit">表情包素材：<code>lmy414/ai-girl-stickers</code> · 原图权利归原作者</p>
               </div>
@@ -509,6 +505,6 @@
     <script src="./assets/vendor/pixi.min.js"></script>
     <script src="./assets/vendor/live2dcubismcore.min.js"></script>
     <script src="./assets/vendor/cubism4.min.js"></script>
-    <script type="module" src="./js/app.js?v=2.2.4"></script>
+    <script type="module" src="./js/app.js?v=2.2.6"></script>
   </body>
 </html>
